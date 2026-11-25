@@ -84,6 +84,8 @@ function toast(msg) {
 
 // ---------- デッキ解析 ----------
 function parseCardBody(s) {
+  const ref = String(s).match(/^@(\d+)/);
+  if (ref) { const d = defFromVid(+ref[1]); if (d) return d; s = s.replace(/^@\d+\s*/, '') || `不明なカード @${ref[1]}`; }
   const parts = s.split(/\s*[\/／]\s*/);
   const def = { name: parts[0].trim(), type: '', trig: '', color: '', cost: null, power: null, hit: null, img: '', img2: '', memo: '' };
   const toks = parts.slice(1).join(' ').split(/\s+/).filter(Boolean);
@@ -485,7 +487,8 @@ function cardHTML(c, seat, zone, opts = {}) {
   const pm = pmod ? `<div class="pm${pmod < 0 ? ' neg' : ''}">${pmod > 0 ? '+' : ''}${pmod}</div>` : '';
   const rev = zone === 'hand' && c.revealed ? '<div class="rev" title="公開中"></div>' : '';
   const cls = `card${img ? ' img' : ''}${isTerr ? ' terr' : ''}${open ? ' open' : ''}${rest}${sel}${dead}`;
-  const style = img ? ` style="background-image:url('${esc(img)}')"` : '';
+  const shown = opts.full ? img : thumbOf(img);
+  const style = img ? ` style="background-image:url('${esc(shown)}')"` : '';
   const label = isTerr ? `${esc(c.name)}${open ? '<br>【開放】' : ''}` : esc(c.name);
   return `<div class="${cls}" ${data}${drag}${style} title="${esc(c.name)}">${stripe}<div class="nm">${label}</div><div class="tg">${tg}</div><div class="ty">${esc(c.type)}${cost != null ? ' C' + cost : ''}</div>${st}${dmg}${pm}${rev}</div>`;
 }
@@ -591,10 +594,14 @@ function renderPreview() {
   }
   const c = f.card;
   const trig = c.trig === 'B' ? '💣 バースト' : c.trig === 'S' ? '★ ショット' : 'なし';
-  el.innerHTML = `<div class="big">${cardHTML(c, p.seat, f.zone, { nodrag: true })}</div>
+  const land = f.zone === 'territory' && side.territoryOpen ? ' land' : '';
+  el.innerHTML = `<div class="big${land}">${cardHTML(c, p.seat, f.zone, { nodrag: true, full: true })}</div>
   <dl><dt>名前</dt><dd>${esc(c.name)}</dd><dt>種類</dt><dd>${esc(c.type || '-')}</dd><dt>色</dt><dd>${esc(c.color || '-')}</dd>
   <dt>コスト</dt><dd>${c.cost ?? '-'}</dd><dt>パワー</dt><dd>${c.power != null ? `${c.power}${c.pmod ? ` → ${c.power + c.pmod}` : ''}` : '-'}${c.dmg ? `（ダメージ${c.dmg}）` : ''}</dd>
-  <dt>ヒット</dt><dd>${c.hit ?? '-'}</dd><dt>トリガー</dt><dd>${trig}</dd><dt>場所</dt><dd>${esc(side.name)}の${ZONE_LABEL[f.zone]}</dd>
+  <dt>ヒット</dt><dd>${c.hit ?? '-'}</dd><dt>トリガー</dt><dd>${trig}</dd>
+  ${c.costText ? `<dt>コスト詳細</dt><dd>${esc(c.costText)}</dd>` : ''}${c.attr ? `<dt>属性</dt><dd>${esc(c.attr)}</dd>` : ''}
+  ${c.titles ? `<dt>称号</dt><dd>${esc(c.titles)}</dd>` : ''}${c.abil ? `<dt>アイコン</dt><dd>${esc(c.abil)}</dd>` : ''}
+  <dt>場所</dt><dd>${esc(side.name)}の${ZONE_LABEL[f.zone]}</dd>
   ${c.memo ? `<dt>メモ</dt><dd>${esc(c.memo)}</dd>` : ''}</dl>`;
 }
 
@@ -679,43 +686,237 @@ function renderModal() {
   const md = root.querySelector('.modal'); if (md) md.scrollTop = keepScroll;
   if (m.type === 'deck') bindDeckModal(m);
 }
-function deckModalHTML(m) {
-  const decks = loadDecks();
-  const p = parseDeck(m.text);
-  const checks = checkDeck(p);
-  return `<div class="modal"><h2>デッキ（${esc(seatName(S.ctrl))}用）</h2>
-  <div class="deck-grid"><div>
-    <p><select id="deck-sel"><option value="">― 保存済みデッキ（${decks.length}） ―</option>${decks.map((d, i) => `<option value="${i}" ${m.idx === i ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>
-    <input id="deck-name" placeholder="デッキ名" value="${esc(m.name)}" style="width:50%"></p>
-    <textarea id="deck-text" spellcheck="false">${esc(m.text)}</textarea>
-  </div><div>
-    <div class="check" id="deck-check">${checkHTML(checks, p)}</div>
-    <div class="helpbox"><p><b>書き方</b><br><code>4 カード名 / ユニット 赤 C3 P5000 H1 バースト</code><br>
-    <code>T: テリトリー名</code><br>「/」より後ろは全部省略可。カード名だけでも動きます。<br>
-    トリガー（バースト／ショット）を書いておくと、ダメージ処理で自動判定します。</p></div>
-  </div></div>
-  <div class="acts">
-    <button data-act="deck-sample">サンプルを入れる</button>
-    <button data-act="deck-del" ${m.idx != null ? '' : 'disabled'} class="danger">削除</button>
-    <button data-act="deck-save">保存</button>
-    <button data-act="close">閉じる</button>
-    <button class="primary" data-act="deck-use">保存してこのデッキを使う</button>
-  </div></div>`;
+// ---------- カードデータベース（公式カードリスト） ----------
+const IMG_PFX = 'https://storage.googleapis.com/prd-buildivide-static-7c153c/uploads/card/';
+const DB = { byVid: new Map(), groups: [], sets: [], titles: [] };
+function buildDB() {
+  for (const set of window.BDB_SETS || []) {
+    DB.sets.push({ id: set.id, name: set.name });
+    for (const c of set.cards) {
+      const g = { ...c, set: set.id, setName: set.name, gi: DB.groups.length };
+      DB.groups.push(g);
+      for (const v of c.v) DB.byVid.set(v[0], g);
+      for (const t of c.titles) if (!DB.titles.includes(t)) DB.titles.push(t);
+    }
+  }
+}
+function imgUrl(h, kind = 'image_path') { const [hash, ts] = String(h).split('?'); return `${IMG_PFX}${hash}/${kind}.png?${ts}`; }
+function thumbOf(url) { return url && url.startsWith(IMG_PFX) ? url.replace('/image_path.png', '/thumb_image_path.png') : url; }
+function defFromVid(vid) {
+  const g = DB.byVid.get(vid); if (!g) return null;
+  const v = g.v.find((x) => x[0] === vid);
+  const terr = g.type === 'テリトリー';
+  return {
+    name: g.name, type: g.type, trig: g.trig, color: g.color, cost: g.cost, power: g.power, hit: g.hit,
+    img: terr ? imgUrl(v[2], 'territory_image_path') : imgUrl(v[2]), img2: terr ? imgUrl(v[2]) : '',
+    memo: '', attr: g.attr, titles: g.titles.join('/'), abil: g.abil.join('/'), costText: g.costText, rar: v[1], vid,
+  };
+}
+const TYPE_ORDER = { テリトリー: 0, エース: 1, ユニット: 2, コマンド: 3 };
+
+// デッキテキスト ⇔ 構造（@カードID の行だけを画面から編集。それ以外の行はそのまま残す）
+function deckStruct(text) {
+  const entries = []; let terr = null; const others = [];
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const line = raw.trim();
+    let m = line.match(/^(?:T|テリトリー)\s*[:：]\s*@(\d+)/i);
+    if (m) { terr = +m[1]; continue; }
+    m = line.match(/^(\d+)\s*[xX×]?\s+@(\d+)/);
+    if (m) { entries.push({ vid: +m[2], n: +m[1] }); continue; }
+    if (line) others.push(raw);
+  }
+  return { entries, terr, others };
+}
+function deckCompose(p) {
+  const out = [];
+  if (p.terr != null) out.push(`T: @${p.terr} ${DB.byVid.get(p.terr)?.name || ''}`);
+  const key = (e) => { const g = DB.byVid.get(e.vid) || {}; return [TYPE_ORDER[g.type] ?? 9, g.cost ?? 99, g.name || '']; };
+  const ents = p.entries.filter((e) => e.n > 0).sort((a, b) => {
+    const ka = key(a), kb = key(b);
+    return ka[0] - kb[0] || ka[1] - kb[1] || String(ka[2]).localeCompare(String(kb[2]), 'ja');
+  });
+  ents.forEach((e) => out.push(`${e.n} @${e.vid} ${DB.byVid.get(e.vid)?.name || ''}`));
+  return [...out, ...p.others].join('\n');
+}
+function groupCount(p, g) {
+  if (g.type === 'テリトリー') return p.terr != null && DB.byVid.get(p.terr) === g ? 1 : 0;
+  return p.entries.filter((e) => DB.byVid.get(e.vid) === g).reduce((a, e) => a + e.n, 0);
+}
+function deckAdd(m, g, delta) {
+  const p = deckStruct(m.text);
+  const art = m.art[g.gi] ?? g.v[0][0];
+  if (g.type === 'テリトリー') {
+    if (delta > 0) p.terr = art; else if (p.terr != null && DB.byVid.get(p.terr) === g) p.terr = null;
+  } else {
+    const e = p.entries.find((x) => DB.byVid.get(x.vid) === g);
+    if (e) e.n = Math.max(0, e.n + delta);
+    else if (delta > 0) p.entries.push({ vid: art, n: delta });
+    if (delta > 0 && groupCount(p, g) > 4) toast(`「${g.name}」が5枚以上です（通常は4枚まで）`);
+  }
+  m.text = deckCompose(p);
+}
+function deckArt(m, g) {
+  const ids = g.v.map((v) => v[0]);
+  const cur = m.art[g.gi] ?? ids[0];
+  const next = ids[(ids.indexOf(cur) + 1) % ids.length];
+  m.art[g.gi] = next;
+  const p = deckStruct(m.text);
+  if (g.type === 'テリトリー') { if (p.terr != null && DB.byVid.get(p.terr) === g) p.terr = next; }
+  else p.entries.forEach((e) => { if (DB.byVid.get(e.vid) === g) e.vid = next; });
+  m.text = deckCompose(p);
+}
+function filteredGroups(f) {
+  const q = (f.q || '').trim();
+  return DB.groups.filter((g) => (!f.set || g.set === f.set) && (!f.type || g.type === f.type)
+    && (!f.color || g.color === f.color) && (!f.trig || (f.trig === 'none' ? !g.trig : g.trig === f.trig))
+    && (!f.title || g.titles.includes(f.title)) && (!q || g.name.includes(q)));
+}
+function gridHTML(m) {
+  if (!DB.groups.length) return '<p class="muted">カードデータが読み込まれていません。右下の「テキストで編集」で手入力できます。</p>';
+  const p = deckStruct(m.text);
+  const list = filteredGroups(m.f);
+  if (!list.length) return '<p class="muted">条件に合うカードがありません</p>';
+  return list.map((g) => {
+    const vid = m.art[g.gi] ?? g.v[0][0];
+    const v = g.v.find((x) => x[0] === vid);
+    const n = groupCount(p, g);
+    const terr = g.type === 'テリトリー';
+    const src = terr ? imgUrl(v[2], 'territory_image_path') : imgUrl(v[2], 'thumb_image_path');
+    const tg = g.trig === 'B' ? '<span class="gtrig b">💣</span>' : g.trig === 'S' ? '<span class="gtrig s">★</span>' : '';
+    return `<div class="gitem${n ? ' has' : ''}" data-gi="${g.gi}">
+      <img loading="lazy" src="${esc(src)}" alt="${esc(g.name)}" data-act="dg-add" data-g="${g.gi}">
+      ${tg}${n ? `<span class="gcnt">${n}</span>` : ''}
+      <div class="gbar"><button data-act="dg-sub" data-g="${g.gi}" ${n ? '' : 'disabled'}>−</button>
+      ${g.v.length > 1 ? `<button data-act="dg-art" data-g="${g.gi}" title="絵柄を切り替え（${esc(v[1])}）">絵${g.v.indexOf(v) + 1}/${g.v.length}</button>` : '<span></span>'}
+      <button data-act="dg-add" data-g="${g.gi}">＋</button></div>
+      <div class="gname">${esc(g.name)}</div></div>`;
+  }).join('');
+}
+function deckListHTML(m) {
+  const p = deckStruct(m.text);
+  const rows = [];
+  if (p.terr != null) {
+    const g = DB.byVid.get(p.terr);
+    rows.push(`<div class="drow terr" data-gi="${g ? g.gi : ''}"><span class="dn">T</span><span class="dname">${esc(g ? g.name : `不明なカード @${p.terr}`)}</span>${g ? `<button data-act="dg-sub" data-g="${g.gi}">×</button>` : ''}</div>`);
+  } else rows.push('<div class="drow muted">テリトリー未選択（テリトリーをクリック）</div>');
+  const ents = deckStruct(deckCompose(p)).entries;
+  let lastType = '';
+  for (const e of ents) {
+    const g = DB.byVid.get(e.vid);
+    if (!g) { rows.push(`<div class="drow ng">${e.n} 不明なカード @${e.vid}</div>`); continue; }
+    if (g.type !== lastType) { rows.push(`<div class="dhead">${g.type}</div>`); lastType = g.type; }
+    const meta = [g.costText, g.power != null ? g.power : '', g.hit != null ? 'H' + g.hit : '', g.trig === 'B' ? '💣' : g.trig === 'S' ? '★' : ''].filter(Boolean).join(' ');
+    rows.push(`<div class="drow" data-gi="${g.gi}"><button data-act="dg-sub" data-g="${g.gi}">−</button><span class="dn">${e.n}</span><button data-act="dg-add" data-g="${g.gi}">＋</button>
+      <span class="dname">${esc(g.name)}<small>${esc(meta)}</small></span></div>`);
+  }
+  if (p.others.some((l) => !l.trim().startsWith('#'))) rows.push('<div class="dhead">手入力の行</div><div class="muted" style="font-size:12px">テキスト欄に手入力のカードがあります</div>');
+  return rows.join('');
 }
 function checkHTML(checks, p) {
   return checks.map(([ok, t]) => `<div class="${ok ? 'ok' : 'ng'}">${ok ? '✔' : '⚠'} ${esc(t)}</div>`).join('')
-    + p.warns.map((w) => `<div class="ng">⚠ ${esc(w)}</div>`).join('')
-    + `<div class="muted">${p.kinds.length}種類</div>`;
+    + p.warns.map((w) => `<div class="ng">⚠ ${esc(w)}</div>`).join('');
+}
+function hoverHTML(g, vid) {
+  if (!g) return '';
+  const v = g.v.find((x) => x[0] === vid) || g.v[0];
+  const terr = g.type === 'テリトリー';
+  const imgs = terr ? `<img src="${esc(imgUrl(v[2], 'territory_image_path'))}"><img class="land" src="${esc(imgUrl(v[2]))}">` : `<img src="${esc(imgUrl(v[2]))}">`;
+  const info = [g.type, g.attr, g.costText, g.power != null ? `P${g.power}` : '', g.hit != null ? `H${g.hit}` : '',
+    g.trig === 'B' ? 'バースト' : g.trig === 'S' ? 'ショット' : '', g.titles.length ? `称号:${g.titles.join('/')}` : '', g.abil.join('/')].filter(Boolean).join('　');
+  return `<div class="himgs">${imgs}</div><div class="hinfo"><b>${esc(g.name)}</b><br>${esc(info)}</div>`;
+}
+function deckModalHTML(m) {
+  const decks = loadDecks();
+  const f = m.f;
+  const opt = (v, label, cur) => `<option value="${esc(v)}" ${cur === v ? 'selected' : ''}>${esc(label)}</option>`;
+  const chips = (key, items) => items.map(([v, l]) => `<button class="chip${f[key] === v ? ' on' : ''}" data-act="df" data-k="${key}" data-v="${esc(v)}">${l}</button>`).join('');
+  const p = parseDeck(m.text);
+  return `<div class="modal deckmodal">
+  <div class="deck-top"><h2>デッキ編集（${esc(seatName(S.ctrl))}用）</h2>
+    <select id="deck-sel"><option value="">― 保存済みデッキ（${decks.length}） ―</option>${decks.map((d, i) => `<option value="${i}" ${m.idx === i ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>
+    <input id="deck-name" placeholder="デッキ名" value="${esc(m.name)}">
+    <button data-act="deck-new">新規</button>
+    <button data-act="deck-del" ${m.idx != null ? '' : 'disabled'} class="danger">削除</button>
+    <span class="grow"></span>
+    <button data-act="deck-save">保存</button>
+    <button data-act="close">閉じる</button>
+    <button class="primary" data-act="deck-use">保存してこのデッキを使う</button>
+  </div>
+  <div class="deck-body">
+    <div class="deck-search">
+      <div class="filters">
+        <select id="df-set"><option value="">全作品</option>${DB.sets.map((s) => opt(s.id, s.name, f.set)).join('')}</select>
+        <select id="df-title"><option value="">称号：すべて</option>${DB.titles.map((t) => opt(t, t, f.title)).join('')}</select>
+        <input id="df-q" placeholder="カード名で検索" value="${esc(f.q)}">
+      </div>
+      <div class="filters">
+        ${chips('type', [['', 'すべて'], ['エース', 'エース'], ['ユニット', 'ユニット'], ['コマンド', 'コマンド'], ['テリトリー', 'テリトリー']])}
+        <span class="sep2"></span>
+        ${chips('color', [['', '全色'], ['黒', '黒'], ['青', '青'], ['白', '白'], ['赤', '赤']])}
+        <span class="sep2"></span>
+        ${chips('trig', [['', '全トリガー'], ['B', '💣バースト'], ['S', '★ショット'], ['none', 'なし']])}
+      </div>
+      <p class="muted hint">画像クリックで1枚追加、右クリックで1枚減らす。「絵1/3」で絵柄（レアリティ違い）を切り替え。</p>
+      <div class="grid" id="deck-grid">${gridHTML(m)}</div>
+    </div>
+    <div class="deck-side">
+      <div id="deck-hover" class="hoverprev">${m.hover != null ? hoverHTML(DB.groups[m.hover], m.art[m.hover] ?? DB.groups[m.hover]?.v[0][0]) : '<p class="muted">カードにマウスを乗せると大きく表示</p>'}</div>
+      <div class="check" id="deck-check">${checkHTML(checkDeck(p), p)}</div>
+      <div id="deck-list" class="dlist">${deckListHTML(m)}</div>
+      <details ${m.showText ? 'open' : ''} id="deck-text-box"><summary>テキストで編集・共有</summary>
+        <textarea id="deck-text" spellcheck="false">${esc(m.text)}</textarea>
+        <p class="muted" style="font-size:11px">「4 @7909 名前」の形式で共有できます。公式データにないカードは「4 カード名 / ユニット 赤 C3 P5000 H1 バースト」のように手入力も可。</p>
+      </details>
+    </div>
+  </div></div>`;
+}
+function refreshDeckModal() {
+  const m = S.modal; if (!m || m.type !== 'deck') return;
+  const grid = $('#deck-grid'); if (!grid) return;
+  const st = grid.scrollTop; grid.innerHTML = gridHTML(m); grid.scrollTop = st;
+  const p = parseDeck(m.text);
+  $('#deck-check').innerHTML = checkHTML(checkDeck(p), p);
+  const dl = $('#deck-list'); const ds = dl.scrollTop; dl.innerHTML = deckListHTML(m); dl.scrollTop = ds;
+  const ta = $('#deck-text'); if (ta && document.activeElement !== ta) ta.value = m.text;
 }
 function bindDeckModal(m) {
   const ta = $('#deck-text'), nm = $('#deck-name'), sel = $('#deck-sel');
-  ta.addEventListener('input', () => { m.text = ta.value; const p = parseDeck(m.text); $('#deck-check').innerHTML = checkHTML(checkDeck(p), p); });
+  ta.addEventListener('input', () => {
+    m.text = ta.value; const p = parseDeck(m.text);
+    $('#deck-check').innerHTML = checkHTML(checkDeck(p), p);
+    $('#deck-list').innerHTML = deckListHTML(m); $('#deck-grid').innerHTML = gridHTML(m);
+  });
+  $('#deck-text-box').addEventListener('toggle', (e) => { m.showText = e.target.open; });
   nm.addEventListener('input', () => { m.name = nm.value; });
   sel.addEventListener('change', () => {
     const d = loadDecks()[+sel.value];
     if (sel.value === '' || !d) { m.idx = null; return; }
     m.idx = +sel.value; m.name = d.name; m.text = d.text; renderModal();
   });
+  $('#df-set').addEventListener('change', (e) => { m.f.set = e.target.value; refreshDeckModal(); });
+  $('#df-title').addEventListener('change', (e) => { m.f.title = e.target.value; refreshDeckModal(); });
+  $('#df-q').addEventListener('input', (e) => { m.f.q = e.target.value; refreshDeckModal(); });
+  const body = $('.deckmodal');
+  body.addEventListener('mouseover', (e) => {
+    const it = e.target.closest('[data-gi]'); if (!it || it.dataset.gi === '') return;
+    const gi = +it.dataset.gi; if (m.hover === gi && !e.target.closest('.gitem')) return;
+    m.hover = gi; $('#deck-hover').innerHTML = hoverHTML(DB.groups[gi], m.art[gi] ?? DB.groups[gi].v[0][0]);
+  });
+  body.addEventListener('contextmenu', (e) => {
+    const it = e.target.closest('.gitem,.drow[data-gi]'); if (!it || it.dataset.gi === '') return;
+    e.preventDefault(); deckAdd(m, DB.groups[+it.dataset.gi], -1); refreshDeckModal();
+  });
+}
+function trialDeckText(setId) {
+  const gs = DB.groups.filter((g) => g.set === setId);
+  const p = { entries: [], terr: null, others: [] };
+  const t = gs.find((g) => g.type === 'テリトリー'); if (t) p.terr = t.v[0][0];
+  const add = (list, n) => { for (const g of list) { if (n <= 0) break; const k = Math.min(4, n); p.entries.push({ vid: g.v[0][0], n: k }); n -= k; } };
+  add(gs.filter((g) => g.trig === 'B'), 12);
+  add(gs.filter((g) => g.trig === 'S'), 8);
+  add(gs.filter((g) => !g.trig && g.type === 'エース'), 12);
+  add(gs.filter((g) => !g.trig && g.type !== 'テリトリー' && g.type !== 'エース'), 8);
+  return deckCompose(p);
 }
 function saveDeckFromModal() {
   const m = S.modal; const name = (m.name || '').trim() || '無題のデッキ';
@@ -730,7 +931,7 @@ function saveDeckFromModal() {
 }
 function helpHTML() {
   return `<div class="modal"><h2>使い方</h2><div class="helpbox">
-  <p><b>1. デッキ</b>：「デッキ」からカードリストを入力して保存。カード名だけでもOK。トリガー（バースト／ショット）を書くとダメージ処理で自動判定されます。</p>
+  <p><b>1. デッキ</b>：「デッキ」で公式カードリストから検索して、画像クリックで追加。保存して「このデッキを使う」。公式データにないカードはテキストで手入力もできます。</p>
   <p><b>2. ゲーム準備</b>：シャッフル→5枚ドロー→引き直し選択→ライフ10枚（イエロー5・レッド5）とエナジー2枚を自動で配置。</p>
   <p><b>3. 開始</b>：先攻・後攻を選ぶと、ターン開始時に「全てスタンド→ドロー（先攻1ターン目はなし）」を自動で行い、メインフェイズになります。</p>
   <p><b>カード操作</b>：カードをクリック → メニューから移動・レスト・ダメージ・パワー修正など。ドラッグ＆ドロップでも移動できます（山札に落とすと一番上）。
@@ -874,7 +1075,7 @@ function onBoardClick(e) {
     if (items.length) openMenu(e.clientX + 4, e.clientY + 4, `${S.sides[seat].name}の${ZONE_LABEL[p]}`, items);
     return;
   }
-  if (t.dataset.bg && S.modal && !['mulligan', 'damage', 'discard'].includes(S.modal.type)) { closeModal(); return; }
+  if (t.dataset.bg && S.modal && !['mulligan', 'damage', 'discard', 'deck'].includes(S.modal.type)) { closeModal(); return; }
   if (!t.closest('.modal')) { S.sel = null; }
 }
 function handleAct(a, el) {
@@ -883,10 +1084,17 @@ function handleAct(a, el) {
     case 'deck': {
       const decks = loadDecks(); const cur = decks.findIndex((d) => d.name === S.sides[seat].deckName);
       const d = cur >= 0 ? decks[cur] : decks[0];
-      openModal({ type: 'deck', idx: d ? decks.indexOf(d) : null, name: d ? d.name : 'サンプルデッキ', text: d ? d.text : SAMPLE_DECK });
+      const def = defaultDeck();
+      openModal({ type: 'deck', idx: d ? decks.indexOf(d) : null, name: d ? d.name : def.name, text: d ? d.text : def.text,
+        f: { set: '', type: '', color: '', trig: '', title: '', q: '' }, art: {}, hover: null, showText: !DB.groups.length });
       break;
     }
-    case 'deck-sample': S.modal.text = SAMPLE_DECK; S.modal.name = S.modal.name || 'サンプルデッキ'; renderModal(); break;
+    case 'deck-new': Object.assign(S.modal, { idx: null, name: '新しいデッキ', text: '' }); renderModal(); break;
+    case 'df': S.modal.f[el.dataset.k] = el.dataset.v; renderModal(); break;
+    case 'dg-add': deckAdd(S.modal, DB.groups[+el.dataset.g], 1); refreshDeckModal(); break;
+    case 'dg-sub': deckAdd(S.modal, DB.groups[+el.dataset.g], -1); refreshDeckModal(); break;
+    case 'dg-art': deckArt(S.modal, DB.groups[+el.dataset.g]); S.modal.hover = +el.dataset.g;
+      $('#deck-hover').innerHTML = hoverHTML(DB.groups[+el.dataset.g], S.modal.art[+el.dataset.g]); refreshDeckModal(); break;
     case 'deck-save': saveDeckFromModal(); renderModal(); break;
     case 'deck-del': {
       const decks = loadDecks(); if (S.modal.idx == null) break;
@@ -986,7 +1194,12 @@ function onDrop(e) {
   dragInfo = null; commit();
 }
 
+function defaultDeck() {
+  if (DB.sets.length) return { name: `おためし（${DB.sets[0].name}）`, text: trialDeckText(DB.sets[0].id) };
+  return { name: 'サンプルデッキ', text: SAMPLE_DECK };
+}
 function init() {
+  buildDB();
   document.addEventListener('click', onBoardClick);
   document.addEventListener('dragstart', onDragStart);
   document.addEventListener('dragover', onDragOver);
@@ -1010,7 +1223,7 @@ function init() {
   });
   document.addEventListener('keydown', (e) => {
     if (e.target.matches('input,textarea,select')) { if (e.key === 'Enter' && e.target.id === 'join-code') handleAct('join-go'); return; }
-    if (e.key === 'Escape') { closeMenu(); if (S.modal && !['mulligan', 'damage', 'discard'].includes(S.modal.type)) closeModal(); }
+    if (e.key === 'Escape') { closeMenu(); if (S.modal && !['mulligan', 'damage', 'discard', 'deck'].includes(S.modal.type)) closeModal(); }
     if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); }
     if (e.key === 'd' && !S.modal) { act(() => drawCards(S.ctrl, 1))(); }
   });
@@ -1024,7 +1237,7 @@ function init() {
   S.sides[0].name = myName();
   // 初回はサンプルデッキを両側にセット
   const decks = loadDecks();
-  const d = decks[0] || { name: 'サンプルデッキ', text: SAMPLE_DECK };
+  const d = decks[0] || defaultDeck();
   [0, 1].forEach((s) => {
     const p = parseDeck(d.text); const sd = S.sides[s];
     sd.deckDef = { cards: p.cards, territory: p.territory }; sd.deckName = d.name;
