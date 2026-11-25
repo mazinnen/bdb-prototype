@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ビルディバイドブライト 対戦テーブル（非公式）</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<header id="top">
+  <h1>BDB 対戦テーブル <small>非公式</small></h1>
+  <div id="header-controls"></div>
+</header>
+<main id="app">
+  <section id="board"></section>
+  <aside id="panel">
+    <div id="preview"><p class="muted">カードをクリックすると、ここに詳細が出ます</p></div>
+    <div id="log"></div>
+    <form id="chat-form" autocomplete="off">
+      <input id="chat-input" placeholder="チャット / メモ" maxlength="200">
+      <button>送信</button>
+    </form>
+  </aside>
+</main>
+<div id="modal-root"></div>
+<div id="menu" hidden></div>
+<div id="toast" hidden></div>
+</body>
+</html>
