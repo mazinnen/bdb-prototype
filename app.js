@@ -60,7 +60,7 @@ const S = {
   preview: null,
   modal: null,           // 表示中のモーダル
   room: '', connected: false, oppName: '',
-  showOppHand: false, autoSwitch: true,
+  showOppHand: false, autoSwitch: true, zoomOn: true,
 };
 
 // ---------- ユーティリティ ----------
@@ -490,7 +490,8 @@ function cardHTML(c, seat, zone, opts = {}) {
   const shown = opts.full ? img : thumbOf(img);
   const style = img ? ` style="background-image:url('${esc(shown)}')"` : '';
   const label = isTerr ? `${esc(c.name)}${open ? '<br>【開放】' : ''}` : esc(c.name);
-  return `<div class="${cls}" ${data}${drag}${style} title="${esc(c.name)}">${stripe}<div class="nm">${label}</div><div class="tg">${tg}</div><div class="ty">${esc(c.type)}${cost != null ? ' C' + cost : ''}</div>${st}${dmg}${pm}${rev}</div>`;
+  const zoom = img ? ` data-zoom="${esc(img)}"${isTerr && c.img2 && !open ? ` data-zoom2="${esc(safeUrl(c.img2))}"` : ''}` : '';
+  return `<div class="${cls}" ${data}${drag}${style}${zoom} title="${esc(c.name)}">${stripe}<div class="nm">${label}</div><div class="tg">${tg}</div><div class="ty">${esc(c.type)}${cost != null ? ' C' + cost : ''}</div>${st}${dmg}${pm}${rev}</div>`;
 }
 function zoneHead(label, extra = '') { return `<div class="zl"><span>${label}</span><span>${extra}</span></div>`; }
 
@@ -564,6 +565,7 @@ function headerHTML() {
        <label class="muted"><input type="checkbox" data-act="showopp" ${S.showOppHand ? 'checked' : ''}> 相手側の手札を表示</label>
        <label class="muted"><input type="checkbox" data-act="autoswitch" ${S.autoSwitch ? 'checked' : ''}> ターン交代で操作側も切替</label>`;
   return `${st}<span class="sep"></span>
+    <label class="muted" title="カードにマウスを乗せたとき原寸で拡大表示"><input type="checkbox" data-act="zoomtoggle" ${S.zoomOn ? 'checked' : ''}> 拡大</label>
     <label class="muted">名前 <input id="name-input" value="${esc(myName())}" size="10" maxlength="20"></label>
     <button data-act="help">使い方</button>`;
 }
@@ -616,10 +618,10 @@ function renderModal() {
   const side = m.seat != null ? S.sides[m.seat] : null;
   switch (m.type) {
     case 'mulligan':
-      h = `<div class="modal"><h2>${esc(side.name)}：最初の手札</h2>
-        <div class="cards">${side.zones.hand.map((c) => cardHTML(c, m.seat, 'hand', { nodrag: true })).join('')}</div>
-        <p class="muted">手札の引き直しは1度だけ。5枚すべてを引き直します（元の手札は山札に戻してシャッフル）。</p>
-        <div class="acts"><button data-act="mull-redo">引き直す</button><button class="primary" data-act="mull-keep">このまま</button></div></div>`;
+      h = `<div class="modal wide"><h2>${esc(side.name)}：最初の手札（引き直しますか？）</h2>
+        <div class="cards bigcards">${side.zones.hand.map((c) => cardHTML(c, m.seat, 'hand', { nodrag: true, full: true })).join('')}</div>
+        <p class="muted">カードにマウスを乗せると拡大します。引き直しは1度だけで、5枚すべてを入れ替えます（元の手札は山札に戻してシャッフル）。</p>
+        <div class="acts"><button data-act="mull-redo">5枚とも引き直す</button><button class="primary" data-act="mull-keep">この手札で始める</button></div></div>`;
       break;
     case 'first':
       h = `<div class="modal narrow"><h2>先攻・後攻</h2><p>じゃんけんで決めたら選んでください。</p>
@@ -635,7 +637,7 @@ function renderModal() {
       const order = m.zone === 'drop' ? [...list].reverse() : list;
       h = `<div class="modal"><h2>${esc(side.name)}の${ZONE_LABEL[m.zone]}${m.limit ? `（上から${m.limit}枚）` : `（${arr.length}枚）`}</h2>
         ${m.zone === 'drop' ? '<p class="muted">新しい順に表示。</p>' : m.zone === 'deck' ? '<p class="muted">左が山札の上。カードをクリックすると移動できます。</p>' : ''}
-        <div class="cards">${order.map((c) => cardHTML(c, m.seat, m.zone, { nodrag: true })).join('') || '<span class="muted">カードがありません</span>'}</div>
+        <div class="cards midcards">${order.map((c) => cardHTML(c, m.seat, m.zone, { nodrag: true, full: true })).join('') || '<span class="muted">カードがありません</span>'}</div>
         <div class="acts">${m.zone === 'deck' && canEdit(m.seat) ? '<button data-act="shuffle-close">シャッフルして閉じる</button>' : ''}<button class="primary" data-act="close">閉じる</button></div></div>`;
       break;
     }
@@ -645,7 +647,7 @@ function renderModal() {
       const shotBtns = c && c.trig === 'S' && findCard(side, c.uid)?.zone === 'drop'
         ? `<button data-act="shot-field">ショット：フィールドに出す</button><button data-act="shot-cmd">ショット：コマンドとして使う</button>` : '';
       h = `<div class="modal narrow"><h2>${esc(side.name)}：ダメージ処理</h2>
-        <div class="flip-show">${c ? cardHTML(c, m.seat, 'drop', { nodrag: true }) : ''}
+        <div class="flip-show">${c ? cardHTML(c, m.seat, 'drop', { nodrag: true, full: true }) : ''}
           <div><p>${esc(m.note)}</p><p>残りダメージ：<b>${m.remain}</b><br>ライフ残り：${lifeLeft}（イエロー${side.zones.lifeY.length}／レッド${side.zones.lifeR.length}）</p></div></div>
         <div class="acts">${shotBtns}
           ${m.remain > 0 ? '<button data-act="dmg-cancel">残りダメージを無効にする</button><button class="primary" data-act="dmg-next">次の1点をめくる</button>' : '<button class="primary" data-act="dmg-cancel">閉じる</button>'}</div></div>`;
@@ -653,9 +655,9 @@ function renderModal() {
     }
     case 'discard': {
       const need = side.zones.hand.length - 5;
-      h = `<div class="modal"><h2>${esc(side.name)}：手札が${side.zones.hand.length}枚です</h2>
+      h = `<div class="modal wide"><h2>${esc(side.name)}：手札が${side.zones.hand.length}枚です</h2>
         <p>5枚になるまで、捨てるカードをクリックしてください（あと${Math.max(0, need)}枚）。</p>
-        <div class="cards">${side.zones.hand.map((c) => cardHTML(c, m.seat, 'hand', { nodrag: true }).replace('class="card', 'data-discard="1" class="card')).join('')}</div>
+        <div class="cards midcards">${side.zones.hand.map((c) => cardHTML(c, m.seat, 'hand', { nodrag: true, full: true }).replace('class="card', 'data-discard="1" class="card')).join('')}</div>
         <div class="acts"><button class="primary" data-act="discard-done" ${need > 0 ? 'disabled' : ''}>ターンを終える</button></div></div>`;
       break;
     }
@@ -781,10 +783,11 @@ function gridHTML(m) {
     const v = g.v.find((x) => x[0] === vid);
     const n = groupCount(p, g);
     const terr = g.type === 'テリトリー';
-    const src = terr ? imgUrl(v[2], 'territory_image_path') : imgUrl(v[2], 'thumb_image_path');
+    const src = terr ? imgUrl(v[2], 'territory_image_path') : imgUrl(v[2]);
+    const zoom = terr ? ` data-zoom="${esc(src)}" data-zoom2="${esc(imgUrl(v[2]))}"` : ` data-zoom="${esc(src)}"`;
     const tg = g.trig === 'B' ? '<span class="gtrig b">💣</span>' : g.trig === 'S' ? '<span class="gtrig s">★</span>' : '';
     return `<div class="gitem${n ? ' has' : ''}" data-gi="${g.gi}">
-      <img loading="lazy" src="${esc(src)}" alt="${esc(g.name)}" data-act="dg-add" data-g="${g.gi}">
+      <img loading="lazy" src="${esc(src)}" alt="${esc(g.name)}" data-act="dg-add" data-g="${g.gi}"${zoom}>
       ${tg}${n ? `<span class="gcnt">${n}</span>` : ''}
       <div class="gbar"><button data-act="dg-sub" data-g="${g.gi}" ${n ? '' : 'disabled'}>−</button>
       ${g.v.length > 1 ? `<button data-act="dg-art" data-g="${g.gi}" title="絵柄を切り替え（${esc(v[1])}）">絵${g.v.indexOf(v) + 1}/${g.v.length}</button>` : '<span></span>'}
@@ -820,7 +823,7 @@ function hoverHTML(g, vid) {
   if (!g) return '';
   const v = g.v.find((x) => x[0] === vid) || g.v[0];
   const terr = g.type === 'テリトリー';
-  const imgs = terr ? `<img src="${esc(imgUrl(v[2], 'territory_image_path'))}"><img class="land" src="${esc(imgUrl(v[2]))}">` : `<img src="${esc(imgUrl(v[2]))}">`;
+  const imgs = '';
   const info = [g.type, g.attr, g.costText, g.power != null ? `P${g.power}` : '', g.hit != null ? `H${g.hit}` : '',
     g.trig === 'B' ? 'バースト' : g.trig === 'S' ? 'ショット' : '', g.titles.length ? `称号:${g.titles.join('/')}` : '', g.abil.join('/')].filter(Boolean).join('　');
   return `<div class="himgs">${imgs}</div><div class="hinfo"><b>${esc(g.name)}</b><br>${esc(info)}</div>`;
@@ -856,11 +859,11 @@ function deckModalHTML(m) {
         <span class="sep2"></span>
         ${chips('trig', [['', '全トリガー'], ['B', '💣バースト'], ['S', '★ショット'], ['none', 'なし']])}
       </div>
-      <p class="muted hint">画像クリックで1枚追加、右クリックで1枚減らす。「絵1/3」で絵柄（レアリティ違い）を切り替え。</p>
+      <p class="muted hint">画像クリックで1枚追加、右クリックで1枚減らす。マウスを乗せると拡大（「拡大」のチェックで切替）。「絵1/3」で絵柄を切り替え。</p>
       <div class="grid" id="deck-grid">${gridHTML(m)}</div>
     </div>
     <div class="deck-side">
-      <div id="deck-hover" class="hoverprev">${m.hover != null ? hoverHTML(DB.groups[m.hover], m.art[m.hover] ?? DB.groups[m.hover]?.v[0][0]) : '<p class="muted">カードにマウスを乗せると大きく表示</p>'}</div>
+      <div id="deck-hover" class="hoverprev">${m.hover != null ? hoverHTML(DB.groups[m.hover], m.art[m.hover] ?? DB.groups[m.hover]?.v[0][0]) : '<p class="muted">カードにマウスを乗せると拡大表示します</p>'}</div>
       <div class="check" id="deck-check">${checkHTML(checkDeck(p), p)}</div>
       <div id="deck-list" class="dlist">${deckListHTML(m)}</div>
       <details ${m.showText ? 'open' : ''} id="deck-text-box"><summary>テキストで編集・共有</summary>
@@ -1198,7 +1201,31 @@ function defaultDeck() {
   if (DB.sets.length) return { name: `おためし（${DB.sets[0].name}）`, text: trialDeckText(DB.sets[0].id) };
   return { name: 'サンプルデッキ', text: SAMPLE_DECK };
 }
+// ---------- 拡大表示 ----------
+let zoomTimer = null, zoomFor = null;
+function showZoom(el, x) {
+  const z = $('#zoom'); const a = el.dataset.zoom, b = el.dataset.zoom2;
+  if (!a) return;
+  z.innerHTML = `<img src="${esc(a)}">${b ? `<img class="land" src="${esc(b)}">` : ''}`;
+  z.classList.toggle('left', x > innerWidth / 2);
+  z.hidden = false;
+}
+function hideZoom() { clearTimeout(zoomTimer); zoomFor = null; const z = $('#zoom'); if (z) z.hidden = true; }
+function onZoomOver(e) {
+  if (!S.zoomOn || dragInfo) return;
+  const el = e.target.closest('[data-zoom]');
+  if (el === zoomFor) return;
+  hideZoom();
+  if (!el || !$('#menu').hidden) return;
+  zoomFor = el;
+  const x = e.clientX;
+  zoomTimer = setTimeout(() => { if (zoomFor === el) showZoom(el, x); }, 220);
+}
 function init() {
+  try { S.zoomOn = localStorage.getItem('bdbt_zoom') !== '0'; } catch { /* noop */ }
+  document.addEventListener('mouseover', onZoomOver);
+  document.addEventListener('mousedown', hideZoom);
+  document.addEventListener('dragstart', hideZoom);
   buildDB();
   document.addEventListener('click', onBoardClick);
   document.addEventListener('dragstart', onDragStart);
@@ -1209,6 +1236,7 @@ function init() {
     const a = e.target.dataset?.act;
     if (a === 'showopp') { S.showOppHand = e.target.checked; render(); }
     if (a === 'autoswitch') { S.autoSwitch = e.target.checked; }
+    if (a === 'zoomtoggle') { S.zoomOn = e.target.checked; try { localStorage.setItem('bdbt_zoom', S.zoomOn ? '1' : '0'); } catch { /* noop */ } hideZoom(); }
   });
   document.addEventListener('input', (e) => {
     if (e.target.id === 'name-input') {

@@ -1,5 +1,5 @@
 :root{
-  --cw:58px; --ch:81px;
+  --ch:clamp(76px,10.2vh,150px); --cw:calc(var(--ch) * .716);
   --bg:#14171c; --table:#1d2530; --zone:#243040; --line:#34465c;
   --text:#e8edf3; --muted:#8a99ab; --accent:#4fa3ff; --warn:#ffb648; --danger:#ff5c5c;
   --yellow:#e9c24a; --red:#e0524f;
@@ -28,14 +28,14 @@ header#top h1 small{font-size:11px;color:var(--muted);font-weight:normal}
 
 main#app{flex:1;display:flex;min-height:0}
 #board{flex:1;overflow:auto;padding:8px;display:flex;flex-direction:column;gap:6px;background:var(--table)}
-#panel{width:300px;flex-shrink:0;border-left:1px solid var(--line);display:flex;flex-direction:column;background:#11151b}
-#preview{padding:10px;border-bottom:1px solid var(--line);min-height:150px;max-height:48%;overflow:auto}
-#preview .big{width:100%;max-width:200px;aspect-ratio:63/88;margin:0 auto 8px}
+#panel{width:clamp(240px,17vw,330px);flex-shrink:0;border-left:1px solid var(--line);display:flex;flex-direction:column;background:#11151b}
+#preview{padding:8px;border-bottom:1px solid var(--line);flex:1;min-height:0;overflow:auto}
+#preview .big{width:100%;max-width:320px;aspect-ratio:63/88;margin:0 auto 8px}
 #preview .big .card{width:100%;height:100%;font-size:14px;cursor:default;transform:none;margin:0}
 #preview .big .card .st{font-size:13px}
 #preview dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:2px 8px;font-size:13px}
 #preview dt{color:var(--muted)}
-#log{flex:1;overflow:auto;padding:8px;font-size:12px;line-height:1.5}
+#log{flex:0 0 clamp(110px,22vh,220px);overflow:auto;padding:6px 8px;font-size:11px;line-height:1.45}
 #log .l{border-bottom:1px dotted #26303c;padding:2px 0}
 #log .l.chat{color:#bfe0ff}
 #log .l.sys{color:var(--muted)}
@@ -44,7 +44,7 @@ main#app{flex:1;display:flex;min-height:0}
 #chat-form input{flex:1;min-width:0}
 
 /* sides */
-.side{display:grid;grid-template-columns:150px 1fr 96px;gap:6px}
+.side{display:grid;grid-template-columns:150px 1fr calc(var(--cw) + 30px);gap:6px}
 .side.me{grid-template-areas:"life field deck" "terr energy drop"}
 .side.opp{grid-template-areas:"terr energy drop" "life field deck"}
 .zone{background:var(--zone);border:1px solid var(--line);border-radius:8px;padding:3px 4px;position:relative;min-height:calc(var(--ch) + 20px)}
@@ -150,19 +150,19 @@ main#app{flex:1;display:flex;min-height:0}
 
 /* 画像カード */
 .card.img .ty,.card.img .st{display:none}
-.card.img .nm{font-size:8px;bottom:0;left:0;right:0;border-radius:0;padding:1px 2px;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;max-height:none}
+.card.img .nm{display:none}
 .card.terr.open{width:var(--ch);height:var(--cw)}
 .card.terr.img{background-color:#000;background-size:contain;background-repeat:no-repeat}
-.hand.me .card{--cw:70px;--ch:98px}
+.hand.me .card{--ch:calc(clamp(76px,10.2vh,150px) * 1.15);--cw:calc(var(--ch) * .716)}
 #preview .big.land{aspect-ratio:88/63;max-width:260px}
 #preview .big .card.img .nm{display:none}
 
 /* デッキ編集 */
-.modal.deckmodal{max-width:min(1400px,98vw);width:98vw;height:94vh;display:flex;flex-direction:column;padding:10px 12px}
+.modal.deckmodal{max-width:98vw;width:98vw;height:94vh;display:flex;flex-direction:column;padding:10px 12px}
 .deck-top{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
 .deck-top h2{margin:0 8px 0 0}
 .deck-top .grow{flex:1}
-.deck-body{flex:1;display:grid;grid-template-columns:1fr 340px;gap:10px;min-height:0}
+.deck-body{flex:1;display:grid;grid-template-columns:1fr 320px;gap:10px;min-height:0}
 .deck-search{display:flex;flex-direction:column;min-height:0}
 .filters{display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin-bottom:5px}
 .filters #df-q{flex:1;min-width:140px}
@@ -170,7 +170,7 @@ main#app{flex:1;display:flex;min-height:0}
 .chip.on{background:#2b6cb8;border-color:#3d83d6}
 .sep2{width:10px}
 .hint{font-size:11px;margin:0 0 4px}
-.grid{flex:1;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px;align-content:start;padding:2px}
+.grid{flex:1;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;align-content:start;padding:2px}
 .gitem{position:relative;background:#0f1318;border:1px solid var(--line);border-radius:6px;padding:3px}
 .gitem.has{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 .gitem img{width:100%;aspect-ratio:63/88;object-fit:cover;border-radius:4px;display:block;cursor:pointer;background:#222}
@@ -179,9 +179,9 @@ main#app{flex:1;display:flex;min-height:0}
 .gtrig.s{color:#ffd84a}
 .gbar{display:flex;justify-content:space-between;gap:2px;margin-top:3px}
 .gbar button{padding:1px 7px;font-size:12px}
-.gname{font-size:10px;line-height:1.25;margin-top:2px;height:2.5em;overflow:hidden;color:#c9d4df}
+.gname{font-size:11px;line-height:1.25;margin-top:2px;height:2.5em;overflow:hidden;color:#c9d4df}
 .deck-side{display:flex;flex-direction:column;gap:6px;min-height:0}
-.hoverprev{min-height:150px;font-size:12px}
+.hoverprev{min-height:60px;font-size:12px}
 .himgs{display:flex;gap:6px;justify-content:center}
 .himgs img{height:170px;border-radius:6px}
 .himgs img.land{height:120px;align-self:center}
@@ -198,3 +198,15 @@ main#app{flex:1;display:flex;min-height:0}
 #deck-text-box textarea{min-height:160px}
 #deck-text-box summary{cursor:pointer;font-size:12px;color:var(--muted)}
 @media (max-width:900px){.deck-body{grid-template-columns:1fr}.deck-side{max-height:40vh}}
+
+/* 拡大表示 */
+#zoom{position:fixed;top:50%;right:12px;transform:translateY(-50%);z-index:90;pointer-events:none;display:flex;gap:8px;align-items:center;filter:drop-shadow(0 8px 28px #000c)}
+#zoom.left{right:auto;left:12px}
+#zoom img{height:min(88vh,698px);border-radius:12px;display:block}
+#zoom img.land{height:auto;width:min(44vw,500px)}
+#zoom[hidden]{display:none}
+.modal.wide{max-width:min(1300px,96vw)}
+.cards.bigcards{justify-content:center;gap:10px}
+.cards.bigcards .card{--ch:min(40vh,330px);--cw:calc(var(--ch) * .716)}
+.cards.midcards .card{--ch:min(26vh,210px);--cw:calc(var(--ch) * .716)}
+.flip-show .card{--ch:min(42vh,300px);--cw:calc(var(--ch) * .716)}
