@@ -210,3 +210,29 @@ main#app{flex:1;display:flex;min-height:0}
 .cards.bigcards .card{--ch:min(40vh,330px);--cw:calc(var(--ch) * .716)}
 .cards.midcards .card{--ch:min(26vh,210px);--cw:calc(var(--ch) * .716)}
 .flip-show .card{--ch:min(42vh,300px);--cw:calc(var(--ch) * .716)}
+
+/* 装備 */
+.z-field .cards{align-items:flex-end}
+.eqwrap{position:relative;display:inline-block}
+.eqwrap .eqa{position:absolute;left:0;z-index:1}
+.eqwrap .equnit{position:relative;z-index:2}
+.eqwrap .eqa .card{box-shadow:0 -2px 6px #0008}
+.eqbadge{position:absolute;right:-4px;top:-6px;z-index:3;background:#c77d1a;color:#fff;font-size:10px;font-weight:bold;border-radius:8px;padding:0 5px}
+.pick-target{outline:3px dashed var(--warn);outline-offset:3px;border-radius:6px;animation:pk 1s infinite}
+@keyframes pk{50%{outline-color:transparent}}
+.pickbar{background:#5a3d10;border:1px solid var(--warn);border-radius:6px;padding:2px 8px;font-size:13px}
+.pickbar button{padding:1px 8px;margin-left:6px}
+/* テリトリーに置かれたカード */
+.terr-row{flex-wrap:nowrap;gap:6px;align-items:flex-end}
+.terrx{position:relative}
+.terrx .card{--ch:calc(clamp(76px,10.2vh,150px) * .62);--cw:calc(var(--ch) * .716)}
+.terrx .xcnt{position:absolute;right:-4px;top:-6px;background:#c77d1a;color:#fff;font-size:11px;font-weight:bold;border-radius:8px;padding:0 6px}
+/* 山札の上から見る */
+.lookrow{gap:10px;justify-content:center;flex-wrap:wrap}
+.lookitem{display:flex;flex-direction:column;align-items:center;gap:4px;padding:4px;border-radius:8px;border:2px solid #2b6cb8}
+.lookitem.bot{border-color:#a3622a;opacity:.85}
+.lookitem .card{--ch:min(34vh,280px);--cw:calc(var(--ch) * .716)}
+.lookbar{display:flex;gap:3px}
+.lookbar button{padding:2px 8px;font-size:12px}
+.pos-top{background:#2b6cb8}
+.pos-bot{background:#a3622a}

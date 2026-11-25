@@ -7,10 +7,10 @@
 // ---------- 定数 ----------
 const ZONE_LABEL = {
   deck: '山札', hand: '手札', field: 'フィールド', energy: 'エナジー', drop: 'ドロップ',
-  lifeY: 'ライフ(イエロー)', lifeR: 'ライフ(レッド)', territory: 'テリトリー',
+  lifeY: 'ライフ(イエロー)', lifeR: 'ライフ(レッド)', territory: 'テリトリー', look: '確認中のカード', att: '装備',
 };
 const PUBLIC_ZONES = ['field', 'energy', 'drop', 'territory'];
-const HIDDEN_ZONES = ['deck', 'hand', 'lifeY', 'lifeR'];
+const HIDDEN_ZONES = ['deck', 'hand', 'lifeY', 'lifeR', 'look'];
 const PHASES = ['stand', 'draw', 'main', 'attack', 'end'];
 const PHASE_LABEL = { stand: 'スタンド', draw: 'ドロー', main: 'メイン', attack: 'アタック', end: 'エンド' };
 const COLORS = { 赤: '#d9534f', 青: '#3b7dd8', 白: '#c9d1da', 黒: '#333', 緑: '#3a9a5b', 黄: '#e0b52a', 紫: '#8a4fbf' };
@@ -44,7 +44,7 @@ T: サンプルテリトリー
 function newSide(name) {
   return {
     name, deckName: '', deckDef: null,
-    zones: { deck: [], hand: [], field: [], energy: [], drop: [], lifeY: [], lifeR: [], territory: [] },
+    zones: { deck: [], hand: [], field: [], energy: [], drop: [], lifeY: [], lifeR: [], territory: [], look: [] },
     territoryOpen: false, myTurns: 0, energySet: 0, stage: 'none', lost: false,
   };
 }
@@ -60,7 +60,7 @@ const S = {
   preview: null,
   modal: null,           // 表示中のモーダル
   room: '', connected: false, oppName: '',
-  showOppHand: false, autoSwitch: true, zoomOn: true,
+  showOppHand: false, autoSwitch: true, zoomOn: true, pick: null,
 };
 
 // ---------- ユーティリティ ----------
@@ -302,16 +302,28 @@ function findCard(side, uid) {
     const i = side.zones[z].findIndex((c) => c.uid === uid);
     if (i >= 0) return { zone: z, idx: i, card: side.zones[z][i] };
   }
+  for (const u of side.zones.field || []) {
+    const i = (u.att || []).findIndex((c) => c.uid === uid);
+    if (i >= 0) return { zone: 'att', idx: i, card: u.att[i], arr: u.att, parent: u };
+  }
   return null;
 }
+const isTerrCard = (c) => c.type === 'テリトリー';
 function cardLabel(c, from, to) {
-  const vis = !c.faceDown && (PUBLIC_ZONES.includes(from) || PUBLIC_ZONES.includes(to) || c.revealed);
+  const pub = (z) => PUBLIC_ZONES.includes(z) || z === 'att';
+  const vis = !c.faceDown && (pub(from) || pub(to) || c.revealed);
   return vis ? `「${c.name}」` : '1枚';
 }
 function moveCard(seat, uid, to, pos = 'end', silent = false) {
   const side = S.sides[seat];
   const f = findCard(side, uid); if (!f) return null;
-  const [c] = side.zones[f.zone].splice(f.idx, 1);
+  const [c] = (f.arr || side.zones[f.zone]).splice(f.idx, 1);
+  if (to !== 'field' && c.att?.length) {
+    side.zones.drop.push(...c.att);
+    if (!silent) log(`${side.name}：「${c.name}」の装備${c.att.length}枚をドロップへ`);
+    c.att = [];
+  }
+  delete c.lookPos;
   if (!['field', 'energy'].includes(to)) { c.rest = false; c.dmg = 0; c.pmod = 0; }
   if (!PUBLIC_ZONES.includes(to)) c.faceDown = false;
   if (to !== 'hand') c.revealed = false;
@@ -321,6 +333,54 @@ function moveCard(seat, uid, to, pos = 'end', silent = false) {
     log(`${side.name}：${cardLabel(c, f.zone, to)}を${ZONE_LABEL[f.zone]}→${where}`);
   }
   return c;
+}
+function attachCard(seat, uid, targetUid) {
+  const side = S.sides[seat];
+  const t = findCard(side, targetUid); if (!t || t.zone !== 'field') return false;
+  const f = findCard(side, uid); if (!f || f.card === t.card) return false;
+  const [c] = (f.arr || side.zones[f.zone]).splice(f.idx, 1);
+  Object.assign(c, { rest: false, dmg: 0, pmod: 0, faceDown: false, revealed: false });
+  delete c.lookPos;
+  if (c.att?.length) { side.zones.drop.push(...c.att); c.att = []; }
+  (t.card.att ||= []).push(c);
+  log(`${side.name}：「${c.name}」を${ZONE_LABEL[f.zone]}から「${t.card.name}」に装備`);
+  return true;
+}
+function startPick(seat, uid) {
+  const c = findCard(S.sides[seat], uid)?.card; if (!c) return;
+  if (S.modal && ['list', 'look'].includes(S.modal.type)) S.modal = null;
+  S.pick = { seat, uid, name: c.name };
+  render();
+  toast('装備するユニットをクリックしてください');
+}
+// 山札の上から見る（見たカードは一時置き場 look へ）
+function startLook(seat, n) {
+  const side = S.sides[seat];
+  if (side.zones.look.length) { openModal({ type: 'look', seat }); return; }
+  n = Math.max(1, Math.min(n, side.zones.deck.length));
+  if (!side.zones.deck.length) return toast('山札がありません');
+  snapshot();
+  const cards = side.zones.deck.splice(0, n);
+  cards.forEach((c) => (c.lookPos = 'top'));
+  side.zones.look.push(...cards);
+  log(`${side.name}：山札の上から${n}枚を見ています`);
+  openModal({ type: 'look', seat });
+  commit();
+}
+function finishLook(seat, mode) {
+  const side = S.sides[seat]; const L = side.zones.look;
+  snapshot();
+  if (mode === 'shuffle') {
+    side.zones.deck.push(...L); shuffle(side.zones.deck);
+    log(`${side.name}：見たカード${L.length}枚を山札に戻してシャッフル`);
+  } else {
+    const top = L.filter((c) => c.lookPos !== 'bottom'), bot = L.filter((c) => c.lookPos === 'bottom');
+    side.zones.deck.unshift(...top); side.zones.deck.push(...bot);
+    if (L.length) log(`${side.name}：見たカードを山札の上に${top.length}枚、下に${bot.length}枚戻しました`);
+  }
+  L.forEach((c) => delete c.lookPos);
+  side.zones.look = [];
+  closeModal(); commit();
 }
 function drawCards(seat, n = 1, why = '') {
   const side = S.sides[seat];
@@ -336,7 +396,7 @@ function drawCards(seat, n = 1, why = '') {
   log(`${side.name}：${why}${n}枚ドロー（山札 残り${side.zones.deck.length}）`);
 }
 function resetZones(side) {
-  side.zones = { deck: [], hand: [], field: [], energy: [], drop: [], lifeY: [], lifeR: [], territory: [] };
+  side.zones = { deck: [], hand: [], field: [], energy: [], drop: [], lifeY: [], lifeR: [], territory: [], look: [] };
   side.territoryOpen = false; side.myTurns = 0; side.energySet = 0; side.stage = 'none'; side.lost = false;
 }
 function useDeck(seat, deck) {
@@ -413,6 +473,10 @@ function setPhase(ph) {
   snapshot();
   S.game.phase = ph;
   if (ph !== 'end') log(`${seatName(S.game.turnPlayer)}：${PHASE_LABEL[ph]}フェイズ`);
+  if (ph === 'attack') {
+    const sd = S.sides[S.game.turnPlayer];
+    if (sd.zones.territory.some((c) => !isTerrCard(c)) && sd.zones.field.length) toast('テリトリーのカードを装備できます（カードをクリック →「ユニットに装備する」）');
+  }
   sendGame();
   if (ph === 'end') { doEndPhase(); return; }
   commit();
@@ -472,7 +536,7 @@ function cardHTML(c, seat, zone, opts = {}) {
   const data = `data-uid="${esc(c.uid)}" data-seat="${seat}" data-zone="${zone}"`;
   const drag = canEdit(seat) && !opts.nodrag ? ' draggable="true"' : '';
   if (hidden) return `<div class="card back${rest}${sel}" ${data}${drag} title="裏向き"></div>`;
-  const isTerr = zone === 'territory';
+  const isTerr = zone === 'territory' && isTerrCard(c);
   const open = isTerr && S.sides[seat]?.territoryOpen;
   const img = safeUrl(open && c.img2 ? c.img2 : c.img);
   const stripe = c.color ? `<div class="stripe">${[...String(c.color)].map((k) => `<i style="background:${COLORS[k] || '#888'}"></i>`).join('')}</div>` : '';
@@ -510,16 +574,35 @@ function sideHTML(seat, pos) {
     <div class="zone z-life" data-dropzone="lifeY" data-seat="${seat}">${zoneHead('ライフ', `計${z.lifeY.length + z.lifeR.length}`)}
       <div class="life-wrap">${lifeBox('lifeY', 'y', 'イエロー')}${lifeBox('lifeR', 'r', 'レッド')}</div></div>
     <div class="zone z-field" data-dropzone="field" data-seat="${seat}">${zoneHead('フィールド', `${z.field.length}体`)}
-      <div class="cards">${z.field.map((c) => cardHTML(c, seat, 'field')).join('')}</div></div>
+      <div class="cards">${z.field.map((c) => unitHTML(c, seat)).join('')}</div></div>
     <div class="zone z-deck" data-dropzone="deck" data-seat="${seat}">${zoneHead('山札')}
       <div class="pile" data-pile="deck" data-seat="${seat}">${deckTop}<span class="cnt">${z.deck.length}枚</span></div></div>
     <div class="zone z-terr" data-dropzone="territory" data-seat="${seat}">${zoneHead('テリトリー', side.territoryOpen ? '<b style="color:var(--warn)">開放中</b>' : '')}
-      <div class="cards">${z.territory.map((c) => cardHTML(c, seat, 'territory')).join('') || '<span class="muted">なし</span>'}</div></div>
+      <div class="cards terr-row">${terrHTML(side, seat)}</div></div>
     <div class="zone z-energy" data-dropzone="energy" data-seat="${seat}">${zoneHead('エナジー', `スタンド ${energyStand}/${z.energy.length}`)}
       <div class="cards">${z.energy.map((c) => cardHTML(c, seat, 'energy')).join('')}</div></div>
     <div class="zone z-drop" data-dropzone="drop" data-seat="${seat}">${zoneHead('ドロップ')}
       <div class="pile" data-pile="drop" data-seat="${seat}">${dropTop}<span class="cnt">${z.drop.length}枚</span></div></div>
   </div>`;
+}
+function unitHTML(c, seat) {
+  const att = c.att || [];
+  const picking = S.pick && S.pick.seat === seat && S.pick.uid !== c.uid ? ' pick-target' : '';
+  if (!att.length) return picking ? `<div class="eqwrap${picking}">${cardHTML(c, seat, 'field')}</div>` : cardHTML(c, seat, 'field');
+  const peek = 20;
+  return `<div class="eqwrap${picking}" style="padding-top:${att.length * peek}px">`
+    + att.map((a, i) => `<div class="eqa" style="top:${i * peek}px">${cardHTML(a, seat, 'att', { nodrag: true })}</div>`).join('')
+    + `<div class="equnit">${cardHTML(c, seat, 'field')}</div><span class="eqbadge">装備${att.length}</span></div>`;
+}
+function terrHTML(side, seat) {
+  const all = side.zones.territory;
+  const main = all.filter(isTerrCard), extra = all.filter((c) => !isTerrCard(c));
+  let h = main.map((c) => cardHTML(c, seat, 'territory')).join('') || '<span class="muted">なし</span>';
+  if (extra.length) {
+    const top = extra[extra.length - 1];
+    h += `<div class="pile terrx" data-pile="terrx" data-seat="${seat}" title="テリトリーに置かれたカード（クリックで一覧）">${cardHTML(top, seat, 'territory')}<span class="xcnt">${extra.length}</span></div>`;
+  }
+  return h;
 }
 function handHTML(seat, pos) {
   const side = S.sides[seat]; const hand = side.zones.hand;
@@ -554,7 +637,8 @@ function centerHTML() {
   b.push(`<button data-act="dice" title="サイコロ">🎲</button><button data-act="coin" title="コイン">🪙</button>`);
   if (!online()) b.push(`<button data-act="switch" title="操作する側を入れ替え">操作側 切替</button>`);
   if (g.started) b.push(`<button data-act="reset" class="danger">対戦リセット</button>`);
-  return `<div class="center"><span class="turninfo">${turnInfo}</span><div class="phases">${phases}</div>${b.join('')}</div>`;
+  const pickBar = S.pick ? `<span class="pickbar">「${esc(S.pick.name)}」を装備するユニットをクリック <button data-act="pick-cancel">中止</button></span>` : '';
+  return `<div class="center"><span class="turninfo">${turnInfo}</span>${pickBar}<div class="phases">${phases}</div>${b.join('')}</div>`;
 }
 function headerHTML() {
   const st = online()
@@ -632,13 +716,32 @@ function renderModal() {
         <div class="acts"><button data-act="close">キャンセル</button></div></div>`;
       break;
     case 'list': {
-      const arr = side.zones[m.zone];
+      const arr = m.zone === 'territory' ? side.zones.territory.filter((c) => !isTerrCard(c)) : side.zones[m.zone];
       const list = m.limit ? arr.slice(0, m.limit) : arr;
       const order = m.zone === 'drop' ? [...list].reverse() : list;
-      h = `<div class="modal"><h2>${esc(side.name)}の${ZONE_LABEL[m.zone]}${m.limit ? `（上から${m.limit}枚）` : `（${arr.length}枚）`}</h2>
-        ${m.zone === 'drop' ? '<p class="muted">新しい順に表示。</p>' : m.zone === 'deck' ? '<p class="muted">左が山札の上。カードをクリックすると移動できます。</p>' : ''}
+      h = `<div class="modal"><h2>${esc(side.name)}の${m.zone === 'territory' ? 'テリトリーに置かれたカード' : ZONE_LABEL[m.zone]}${m.limit ? `（上から${m.limit}枚）` : `（${arr.length}枚）`}</h2>
+        ${m.zone === 'territory' ? '<p class="muted">カードをクリック →「ユニットに装備する」でフィールドのユニットに装備できます。盤面でカードをユニットにドラッグしても装備できます。</p>' : m.zone === 'drop' ? '<p class="muted">新しい順に表示。</p>' : m.zone === 'deck' ? '<p class="muted">左が山札の上。カードをクリックすると移動できます。</p>' : ''}
         <div class="cards midcards">${order.map((c) => cardHTML(c, m.seat, m.zone, { nodrag: true, full: true })).join('') || '<span class="muted">カードがありません</span>'}</div>
         <div class="acts">${m.zone === 'deck' && canEdit(m.seat) ? '<button data-act="shuffle-close">シャッフルして閉じる</button>' : ''}<button class="primary" data-act="close">閉じる</button></div></div>`;
+      break;
+    }
+    case 'look': {
+      const L = side.zones.look;
+      const items = L.map((c, i) => {
+        const bot = c.lookPos === 'bottom';
+        return `<div class="lookitem${bot ? ' bot' : ''}">${cardHTML(c, m.seat, 'look', { nodrag: true, full: true })}
+          <div class="lookbar"><button data-act="lk-move" data-i="${i}" data-d="-1" ${i ? '' : 'disabled'}>←</button>
+          <button data-act="lk-pos" data-i="${i}" class="${bot ? 'pos-bot' : 'pos-top'}">${bot ? '山札の下へ' : '山札の上へ'}</button>
+          <button data-act="lk-move" data-i="${i}" data-d="1" ${i < L.length - 1 ? '' : 'disabled'}>→</button></div></div>`;
+      }).join('');
+      const nt = L.filter((c) => c.lookPos !== 'bottom').length;
+      h = `<div class="modal wide"><h2>${esc(side.name)}：山札の上から見たカード（${L.length}枚）</h2>
+        <p class="muted">カードをクリック → 手札・フィールド・ドロップ・テリトリーなどへ移動。残ったカードは「上へ／下へ」と並び順（← →）を決めて戻します。<br>
+        上に戻すカードは<b>左にあるほど山札の上</b>になり、下に戻すカードは<b>左から順に山札の下</b>へ置きます。</p>
+        <div class="cards lookrow">${items || '<span class="muted">すべて移動しました</span>'}</div>
+        <div class="acts" style="justify-content:space-between">
+          <span><button data-act="lk-all" data-v="top">全部 上へ</button> <button data-act="lk-all" data-v="bottom">全部 下へ</button> <button data-act="lk-shuffle">山札に戻してシャッフル</button></span>
+          <button class="primary" data-act="lk-done">${L.length ? `決定（上に${nt}枚・下に${L.length - nt}枚）` : '閉じる'}</button></div></div>`;
       break;
     }
     case 'damage': {
@@ -940,6 +1043,10 @@ function helpHTML() {
   <p><b>カード操作</b>：カードをクリック → メニューから移動・レスト・ダメージ・パワー修正など。ドラッグ＆ドロップでも移動できます（山札に落とすと一番上）。
   エナジーをクリックするとすぐレスト／スタンドが切り替わります（Shift+クリックでメニュー）。</p>
   <p><b>山札・ドロップ・ライフ</b>：クリックでメニュー（ドロー、上からN枚見る、山札を探す、シャッフルなど）。</p>
+  <p><b>上からN枚見る</b>：見たカードは山札から取り出して表示します。手札などへ移動したあと、残りを「上へ／下へ」と並び順を決めて戻します。</p>
+  <p><b>テリトリーに置く・装備</b>：手札のコマンドは「コマンドとして使う（テリトリーに置く）」でテリトリーに重ねて置けます（右下の数字が枚数）。
+  置いたカードはクリックで一覧 → 「ユニットに装備する」→ 装備先のユニットをクリック。テリトリーのカードをユニットにドラッグしても装備できます（他のゾーンからはAlt+ドラッグ）。
+  装備したユニットがフィールドを離れると、装備カードはドロップへ置かれます。</p>
   <p><b>ダメージを受ける</b>：ヒット数を選ぶと、ライフをイエローの上から1枚ずつめくってドロップへ。バーストなら追加1ダメージ、ショットならプレイするか選べます。ライフ0でダメージを受けると敗北表示。</p>
   <p><b>ターン終了</b>：エンドフェイズでダメージ・パワー修正を解除し、手札6枚以上なら5枚まで捨てる画面が出ます。</p>
   <p><b>一人回し</b>：P1・P2 両方を自分で操作します。「操作側 切替」で画面の上下が入れ替わります。</p>
@@ -976,9 +1083,10 @@ function cardMenuItems(seat, uid) {
     items.push({ label: 'フィールドに出す', fn: mv('field') });
     items.push({ label: `エナジーセット${side.energySet ? '（今ターン済）' : ''}`, fn: act(() => { moveCard(seat, uid, 'energy'); side.energySet++; if (side.energySet > 1) toast('このターン2回目のエナジーセットです'); }) });
     items.push({ label: 'コマンドとして使う（ドロップへ）', fn: mv('drop') });
+    items.push({ label: 'コマンドとして使う（テリトリーに置く）', fn: mv('territory') });
     items.push({ label: c.revealed ? '公開をやめる' : '相手に公開する', fn: act(() => { c.revealed = !c.revealed; log(`${side.name}：手札の「${c.name}」を${c.revealed ? '公開' : '非公開に'}`); }) });
   }
-  if (z === 'field' || z === 'energy' || z === 'territory') {
+  if (z === 'field' || z === 'energy' || (z === 'territory' && isTerrCard(c))) {
     items.push({ label: c.rest ? 'スタンドする' : 'レストする', fn: act(() => { c.rest = !c.rest; if (z !== 'energy') log(`${side.name}：「${c.faceDown ? '裏向きカード' : c.name}」を${c.rest ? 'レスト' : 'スタンド'}`); }) });
   }
   if (z === 'field') {
@@ -994,12 +1102,16 @@ function cardMenuItems(seat, uid) {
   if (z === 'field' || z === 'energy') {
     items.push({ label: c.faceDown ? '表向きにする' : '裏向きにする', fn: act(() => { c.faceDown = !c.faceDown; }) });
   }
-  if (z === 'territory') {
+  if (z === 'territory' && isTerrCard(c)) {
     items.push({ label: side.territoryOpen ? 'テリトリーを閉じる' : 'テリトリーを開放する', fn: act(() => { side.territoryOpen = !side.territoryOpen; log(`${side.name}：テリトリー「${c.name}」を${side.territoryOpen ? '開放！' : '閉じました'}`, side.territoryOpen ? 'sys' : ''); }) });
     return items;
   }
+  if (side.zones.field.some((u) => u.uid !== uid && !(f.parent && u === f.parent && false))) {
+    const others = side.zones.field.filter((u) => u.uid !== uid);
+    if (others.length) items.push({ label: z === 'att' ? '別のユニットに付け替える…' : 'ユニットに装備する…', fn: () => startPick(seat, uid) });
+  }
   items.push('-');
-  const dests = [['hand', '手札へ'], ['field', 'フィールドへ'], ['energy', 'エナジーへ'], ['drop', 'ドロップへ']].filter(([k]) => k !== z);
+  const dests = [['hand', '手札へ'], ['field', z === 'att' ? '装備を外してフィールドへ' : 'フィールドへ'], ['energy', 'エナジーへ'], ['drop', 'ドロップへ'], ['territory', 'テリトリーに置く']].filter(([k]) => k !== z);
   dests.forEach(([k, l]) => items.push({ label: l, fn: mv(k) }));
   items.push([{ label: '山札の上', fn: mv('deck', 'top') }, { label: '山札の下', fn: mv('deck', 'end') }]);
   items.push([{ label: 'ライフ(黄)上', fn: mv('lifeY', 'top') }, { label: 'ライフ(赤)上', fn: mv('lifeR', 'top') }]);
@@ -1011,7 +1123,9 @@ function pileMenuItems(seat, pile) {
   if (pile === 'deck') {
     if (!editable) return [];
     items.push({ label: '1枚ドロー', fn: act(() => drawCards(seat, 1)) });
-    items.push({ label: '上からN枚を見る…', fn: () => { const n = parseInt(prompt('何枚見ますか？', '3'), 10); if (n > 0) { log(`${side.name}：山札の上から${n}枚を見ました`); openModal({ type: 'list', seat, zone: 'deck', limit: n }); } } });
+    if (z.look.length) items.push({ label: `確認中のカード（${z.look.length}枚）に戻る`, fn: () => openModal({ type: 'look', seat }) });
+    items.push([{ label: '上から見る:', fn: () => {} }, ...[1, 2, 3, 4, 5].map((n) => ({ label: `${n}`, fn: () => startLook(seat, n) }))]);
+    items.push({ label: '上からN枚を見る（枚数指定）…', fn: () => { const n = parseInt(prompt('何枚見ますか？', '6'), 10); if (n > 0) startLook(seat, n); } });
     items.push({ label: '山札を探す（全部見る）', fn: () => { log(`${side.name}：山札を確認しています`); openModal({ type: 'list', seat, zone: 'deck' }); } });
     items.push({ label: 'シャッフル', fn: act(() => { shuffle(z.deck); log(`${side.name}：山札をシャッフル`); }) });
     items.push('-');
@@ -1051,13 +1165,23 @@ function onBoardClick(e) {
   const dc = t.closest('[data-discard]');
   if (dc) { const seat = +dc.dataset.seat; snapshot(); moveCard(seat, dc.dataset.uid, 'drop'); commit(); return; }
 
+  if (S.pick) {
+    const ce = t.closest('.card[data-uid]'); const p = S.pick; S.pick = null;
+    const tgtSeat = ce ? +ce.dataset.seat : -1;
+    let tgtUid = ce?.dataset.uid;
+    if (ce && ce.dataset.zone === 'att') tgtUid = findCard(S.sides[tgtSeat], tgtUid)?.parent?.uid;
+    if (ce && tgtSeat === p.seat && findCard(S.sides[p.seat], tgtUid)?.zone === 'field' && tgtUid !== p.uid) {
+      snapshot(); attachCard(p.seat, p.uid, tgtUid); commit(); return;
+    }
+    toast('装備を中止しました'); render(); return;
+  }
   const cardEl = t.closest('.card[data-uid]');
   if (cardEl && !cardEl.closest('.pile') && !cardEl.closest('.lifebox')) {
     const seat = +cardEl.dataset.seat; const uid = cardEl.dataset.uid; const zone = cardEl.dataset.zone;
     S.sel = { seat, uid }; S.preview = { seat, uid };
     const c = findCard(S.sides[seat], uid)?.card;
     const inModal = !!cardEl.closest('.modal');
-    if (inModal && S.modal?.type !== 'list') { renderPreview(); return; }
+    if (inModal && !['list', 'look'].includes(S.modal?.type)) { renderPreview(); return; }
     if (!inModal && cardEl.closest('#preview')) { renderPreview(); return; }
     if (canEdit(seat) && zone === 'energy' && !e.shiftKey && !S.modal) {
       snapshot(); c.rest = !c.rest; commit(); return;
@@ -1074,11 +1198,12 @@ function onBoardClick(e) {
   if (pile) {
     const seat = +pile.dataset.seat; const p = pile.dataset.pile;
     if (p === 'drop') { const d = S.sides[seat].zones.drop; if (d.length) S.preview = { seat, uid: d[d.length - 1].uid }; renderPreview(); }
+    if (p === 'terrx') { openModal({ type: 'list', seat, zone: 'territory' }); return; }
     const items = pileMenuItems(seat, p);
     if (items.length) openMenu(e.clientX + 4, e.clientY + 4, `${S.sides[seat].name}の${ZONE_LABEL[p]}`, items);
     return;
   }
-  if (t.dataset.bg && S.modal && !['mulligan', 'damage', 'discard', 'deck'].includes(S.modal.type)) { closeModal(); return; }
+  if (t.dataset.bg && S.modal && !['mulligan', 'damage', 'discard', 'deck', 'look'].includes(S.modal.type)) { closeModal(); return; }
   if (!t.closest('.modal')) { S.sel = null; }
 }
 function handleAct(a, el) {
@@ -1144,6 +1269,12 @@ function handleAct(a, el) {
       [0, 1].forEach((s) => { const sd = S.sides[s]; if (canEdit(s) && sd.deckDef) { sd.zones.deck = sd.deckDef.cards.map(makeCard); if (sd.deckDef.territory) sd.zones.territory = [makeCard(sd.deckDef.territory)]; } });
       log('対戦をリセットしました', 'sys'); commit(); break;
     case 'close': closeModal(); break;
+    case 'pick-cancel': S.pick = null; render(); break;
+    case 'lk-pos': { const c = S.sides[S.modal.seat].zones.look[+el.dataset.i]; c.lookPos = c.lookPos === 'bottom' ? 'top' : 'bottom'; commit(); break; }
+    case 'lk-move': { const L = S.sides[S.modal.seat].zones.look; const i = +el.dataset.i, j = i + +el.dataset.d; if (j >= 0 && j < L.length) { [L[i], L[j]] = [L[j], L[i]]; commit(); } break; }
+    case 'lk-all': S.sides[S.modal.seat].zones.look.forEach((c) => (c.lookPos = el.dataset.v)); commit(); break;
+    case 'lk-shuffle': finishLook(S.modal.seat, 'shuffle'); break;
+    case 'lk-done': finishLook(S.modal.seat, 'order'); break;
     case 'shuffle-close': snapshot(); shuffle(S.sides[S.modal.seat].zones.deck); log(`${S.sides[S.modal.seat].name}：山札をシャッフル`); closeModal(); commit(); break;
     case 'host': hostRoom(); break;
     case 'join': openModal({ type: 'join', code: '' }); break;
@@ -1181,6 +1312,11 @@ function onDrop(e) {
   const f = findCard(S.sides[dragInfo.seat], dragInfo.uid);
   if (!f) return;
   if (to === 'lifeY') { const box = e.target.closest('.lifebox'); if (box) to = box.dataset.pile; }
+  if (to === 'field' && f.zone !== 'field') {
+    const tgt = e.target.closest('.card[data-uid]');
+    let tu = tgt?.dataset.zone === 'field' ? tgt.dataset.uid : tgt?.dataset.zone === 'att' ? findCard(S.sides[dragInfo.seat], tgt.dataset.uid)?.parent?.uid : null;
+    if (tu && (f.zone === 'territory' || e.altKey)) { snapshot(); attachCard(dragInfo.seat, dragInfo.uid, tu); dragInfo = null; commit(); return; }
+  }
   if (f.zone === to) {
     // 同じゾーン内：フィールド/エナジー/手札は並べ替え
     const tgt = e.target.closest('.card[data-uid]');
@@ -1251,7 +1387,7 @@ function init() {
   });
   document.addEventListener('keydown', (e) => {
     if (e.target.matches('input,textarea,select')) { if (e.key === 'Enter' && e.target.id === 'join-code') handleAct('join-go'); return; }
-    if (e.key === 'Escape') { closeMenu(); if (S.modal && !['mulligan', 'damage', 'discard', 'deck'].includes(S.modal.type)) closeModal(); }
+    if (e.key === 'Escape') { closeMenu(); if (S.pick) { S.pick = null; render(); } if (S.modal && !['mulligan', 'damage', 'discard', 'deck', 'look'].includes(S.modal.type)) closeModal(); }
     if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); }
     if (e.key === 'd' && !S.modal) { act(() => drawCards(S.ctrl, 1))(); }
   });
